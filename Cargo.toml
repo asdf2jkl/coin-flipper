@@ -7,9 +7,10 @@ edition = "2021"
 
 [profile.max-perf]
 inherits = "release"
-lto = "fat"
+lto = true
 codegen-units = 1
-opt-level = 3
+# panic = "abort"
 
 [dependencies]
 rand = { version = "0.8.4", features = ["small_rng"] }
+getrandom = { version = "0.2.3", features = ["std", "rdrand"] }
