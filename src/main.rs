@@ -18,10 +18,10 @@ struct Allocation {
 
 struct Flipper {
     name: &'static str,
-    function: fn(count: usize) -> usize,
+    function: fn(count: u64) -> u64,
 }
 
-const GENERATORS_TO_TEST: [Flipper; 9] = [
+const GENERATORS_TO_TEST: [Flipper; 10] = [
     Flipper {
         name: "Naive Loop",
         function: naive_loop,
@@ -36,7 +36,7 @@ const GENERATORS_TO_TEST: [Flipper; 9] = [
     },
     Flipper {
         name: "Vector buffer count simple (usize):",
-        function: fill_buf_count_usize,
+        function: fill_buf_count_u64,
     },
     Flipper {
         name: "Vector buffer count + unsafe:",
@@ -55,20 +55,24 @@ const GENERATORS_TO_TEST: [Flipper; 9] = [
         function: gen_nobuf_count_usize,
     },
     Flipper {
-        name: "Count usize noalloc nobuffer vectored:",
+        name: "Count noalloc nobuffer vectored:",
         function: gen_nobuf_count_usize_vectorized,
     }, /*
        Flipper {
-           name: "Count usize noalloc nobuffer avx512:",
+           name: "Count noalloc nobuffer avx512:",
            function: vectored_xoshiro::gen_avx512_intrinsics,
        }, */
+     Flipper {
+         name: "Count noalloc nobuffer u64x4 generic",
+         function: vectored_xoshiro::gen_portable_simd,
+     },
 ];
 
 fn main() {
     let coins_flipped = std::env::args()
         .next_back()
         .unwrap()
-        .parse::<usize>()
+        .parse::<u64>()
         .unwrap();
 
     for generator in GENERATORS_TO_TEST {
@@ -81,62 +85,55 @@ fn main() {
     }
 }
 
-fn naive_loop(count: usize) -> usize {
+fn naive_loop(count: u64) -> u64 {
     let mut count_heads = 0;
     for _ in 0..count {
-        count_heads += rand::random::<bool>() as usize;
+        count_heads += rand::random::<bool>() as u64;
     }
     count_heads
 }
 
-fn naive_loop_threadrng(count: usize) -> usize {
+fn naive_loop_threadrng(count: u64) -> u64 {
     let mut rng = thread_rng();
     let mut count_heads = 0;
     for _ in 0..count {
-        count_heads += rng.gen::<bool>() as usize;
+        count_heads += rng.gen::<bool>() as u64;
     }
     count_heads
 }
 
-fn naive_loop_smallrng(count: usize) -> usize {
+fn naive_loop_smallrng(count: u64) -> u64 {
     let mut rng = SmallRng::from_entropy();
     let mut count_heads = 0;
     for _ in 0..count {
-        count_heads += rng.gen::<bool>() as usize;
+        count_heads += rng.gen::<bool>() as u64;
     }
     count_heads
 }
 
-fn fill_buf_count_usize(count: usize) -> usize {
-    type ElementSize = usize;
-
-    let buf_len = (count / (size_of::<ElementSize>() * 8)) + 1;
-    let mut buffer: Vec<ElementSize> = Vec::with_capacity(buf_len);
+fn fill_buf_count_u64(count: u64) -> u64 {
+    let buf_len = ((count / 64) + 1).try_into().unwrap();
+    let mut buffer: Vec<u64> = Vec::with_capacity(buf_len);
     buffer.resize_with(buf_len, Default::default);
     let mut rng = SmallRng::from_entropy();
     rng.fill(buffer.as_mut_slice());
 
     let remainder = buffer.pop().unwrap_or_else(|| unreachable!());
     buffer.iter().fold(0, |accumulator, element| {
-        accumulator + element.count_ones() as usize
-    }) + ((remainder & !(!0 << (count % (size_of::<ElementSize>() * 8)))).count_ones() as usize)
+        accumulator + element.count_ones() as u64
+    }) + ((remainder & !(!0 << (count % 64))).count_ones() as u64)
 }
 
-fn fill_buf_count_w_unsafe(count: usize) -> usize {
-    type ElementSize = usize;
-    const SIZEOF: usize = size_of::<ElementSize>();
-
+fn fill_buf_count_w_unsafe(count: u64) -> u64 {
     if count == 0 {
         return 0;
     }
 
     let allocation = {
-        let layout = Layout::from_size_align(
-            count / (size_of::<ElementSize>()),
-            std::mem::align_of::<ElementSize>(),
-        )
-        .unwrap_or_else(|_| unsafe { unreachable_unchecked() })
-        .pad_to_align();
+        let layout =
+            Layout::from_size_align((count / 8).try_into().unwrap(), std::mem::align_of::<u64>())
+                .unwrap_or_else(|_| unsafe { unreachable_unchecked() })
+                .pad_to_align();
 
         Allocation {
             ptr: unsafe { alloc(layout) },
@@ -144,72 +141,70 @@ fn fill_buf_count_w_unsafe(count: usize) -> usize {
         }
     };
 
-    let buffer = unsafe { &mut *slice_from_raw_parts_mut(allocation.ptr, count / 8) };
+    let buffer =
+        unsafe { &mut *slice_from_raw_parts_mut(allocation.ptr, (count / 8).try_into().unwrap()) };
 
     let mut rng = SmallRng::from_entropy();
 
     rng.fill_bytes(buffer);
 
-    let remainder: ElementSize = rng.gen();
+    let remainder = rng.gen::<u64>();
 
     let result = unsafe {
-        &*slice_from_raw_parts_mut(allocation.ptr as *mut ElementSize, count / (8 * SIZEOF))
+        &*slice_from_raw_parts_mut(allocation.ptr as *mut u64, (count / 64).try_into().unwrap())
     }
     .iter()
     .fold(0, |accumulator, element| {
-        accumulator + element.count_ones() as usize
+        accumulator + element.count_ones() as u64
     });
 
     unsafe { dealloc(allocation.ptr, allocation.layout) };
 
-    result + ((remainder & !(!0 << (count % (size_of::<ElementSize>() * 8)))).count_ones() as usize)
+    result + ((remainder & !(!0 << (count % 64))).count_ones() as u64)
 }
 
-fn fill_buff_count_noalloc(count: usize) -> usize {
-    type ElementSize = usize;
-    const LEN: usize = 16; // Make a good size.
-    type Buffer = [ElementSize; LEN / size_of::<ElementSize>()];
+fn fill_buff_count_noalloc(count: u64) -> u64 {
+    const LEN: u64 = 16; // Make a good size.
+    type Buffer = [u64; LEN as usize];
 
     if count == 0 {
         return 0;
     };
 
-    let mut buffer = [0usize;//unsafe { std::mem::MaybeUninit::<ElementSize>::uninit().assume_init()};
-        LEN / size_of::<ElementSize>()];
+    let mut buffer = [0u64;//unsafe { std::mem::MaybeUninit::<ElementSize>::uninit().assume_init()};
+        LEN as usize];
     let mut accumulator = 0;
     let mut rng = SmallRng::from_entropy();
 
-    for _ in 0..(count / (size_of::<Buffer>() * 8)) {
+    for _ in 0..(count / (LEN * 64)) {
         rng.fill_bytes(unsafe {
-            &mut *slice_from_raw_parts_mut(buffer.as_mut_ptr().cast::<u8>(), LEN)
+            &mut *slice_from_raw_parts_mut(buffer.as_mut_ptr().cast::<u8>(), LEN as usize)
         });
         accumulator += buffer.iter().fold(0, |accumulator, element| {
-            accumulator + element.count_ones() as usize
+            accumulator + element.count_ones() as u64
         })
     }
 
-    let rem_buffer =
-        &mut buffer[..(((count % (size_of::<Buffer>() * 8)) / (size_of::<ElementSize>() * 8)) + 1)];
-    let remainder = (count % size_of::<ElementSize>()) - (size_of_val(rem_buffer) * 8);
+    let rem_buffer = &mut buffer[..((((count % (64 * LEN)) / 64) + 1) as usize)];
+    let remainder = (count % 64) - (64 * LEN);
     rng.fill(rem_buffer);
 
     accumulator
         + rem_buffer[..(rem_buffer.len() - 1)]
             .iter()
             .fold(0, |accumulator, element| {
-                accumulator + element.count_ones() as usize
+                accumulator + element.count_ones() as u64
             })
         + (*rem_buffer
             .last()
             .unwrap_or_else(|| unsafe { unreachable_unchecked() })
-            & !(!0 << (remainder % (size_of::<ElementSize>() * 8))))
-            .count_ones() as usize
+            & !(!0 << (remainder % 64)))
+            .count_ones() as u64
 }
 
-fn fill_buff_count_noalloc_union(count: usize) -> usize {
-    type ElementSize = usize;
-    const LEN: usize = 16; // Make a good size.
-    type Buffer = [ElementSize; LEN / size_of::<ElementSize>()];
+fn fill_buff_count_noalloc_union(count: u64) -> u64 {
+    const LEN: u64 = 16; // Make a good size.
+    type Buffer = [u64; LEN as usize];
 
     if count == 0 {
         return 0;
@@ -217,7 +212,7 @@ fn fill_buff_count_noalloc_union(count: usize) -> usize {
 
     union Data {
         buffer: Buffer,
-        bytes: [u8; LEN],
+        bytes: [u8; LEN as usize * 8],
         init: bool,
     }
 
@@ -225,49 +220,49 @@ fn fill_buff_count_noalloc_union(count: usize) -> usize {
     let mut accumulator = 0;
     let mut rng = SmallRng::from_entropy();
 
-    for _ in 0..(count / (size_of::<Buffer>() * 8)) {
+    for _ in 0..(count / (LEN * 64)) {
         unsafe {
             rng.fill_bytes(&mut buffer.bytes);
             accumulator += buffer.buffer.iter().fold(0, |accumulator, element| {
-                accumulator + element.count_ones() as usize
+                accumulator + element.count_ones() as u64
             })
         }
     }
 
-    let rem_buffer = &mut unsafe { buffer.buffer }
-        [..(((count % (size_of::<Buffer>() * 8)) / (size_of::<ElementSize>() * 8)) + 1)];
-    let remainder = (count % size_of::<ElementSize>()) - (size_of_val(rem_buffer) * 8);
+    let rem_buffer =
+        &mut unsafe { buffer.buffer }[..((((count % (64 * LEN)) / (64)) + 1) as usize)];
+    let remainder = (count % 64) - (64 * LEN);
     rng.fill(rem_buffer);
 
     accumulator
-        + rem_buffer[..(rem_buffer.len() - 1)]
+        + rem_buffer[..((rem_buffer.len() - 1) as usize)]
             .iter()
             .fold(0, |accumulator, element| {
-                accumulator + element.count_ones() as usize
+                accumulator + element.count_ones() as u64
             })
         + (*rem_buffer
             .last()
             .unwrap_or_else(|| unsafe { unreachable_unchecked() })
-            & !(!0 << (remainder % (size_of::<ElementSize>() * 8))))
-            .count_ones() as usize
+            & !(!0 << (remainder % 64)))
+            .count_ones() as u64
 }
 
-fn gen_nobuf_count_usize(count: usize) -> usize {
+fn gen_nobuf_count_usize(count: u64) -> u64 {
     if count == 0 {
         0
     } else {
         let mut rng = SmallRng::from_entropy();
         let mut count_heads = 0;
-        for _ in 0..(count / (size_of::<usize>() * 8)) {
-            count_heads += rng.gen::<usize>().count_ones() as usize;
+        for _ in 0..(count / (size_of::<usize>() * 8) as u64) {
+            count_heads += rng.gen::<usize>().count_ones() as u64;
         }
         count_heads
-            + ((rng.gen::<usize>() & !(!0 << (count % (size_of::<usize>() * 8)))).count_ones()
-                as usize)
+            + ((rng.gen::<usize>() & !(!0 << (count % (size_of::<usize>() * 8) as u64)))
+                .count_ones() as u64)
     }
 }
 
-fn gen_nobuf_count_usize_vectorized(count: usize) -> usize {
+fn gen_nobuf_count_usize_vectorized(count: u64) -> u64 {
     let mut thread_rng = thread_rng();
     let mut rng = [
         SmallRng::from_rng(&mut thread_rng).unwrap(),
@@ -276,22 +271,25 @@ fn gen_nobuf_count_usize_vectorized(count: usize) -> usize {
         SmallRng::from_rng(&mut thread_rng).unwrap(),
     ];
     let mut count_heads = 0;
-    for _ in 0..(count / (size_of::<usize>() * 8 * 4)) {
-        count_heads += rng[0].gen::<usize>().count_ones() as usize;
-        count_heads += rng[1].gen::<usize>().count_ones() as usize;
-        count_heads += rng[2].gen::<usize>().count_ones() as usize;
-        count_heads += rng[3].gen::<usize>().count_ones() as usize;
+    for _ in 0..(count / (size_of::<usize>() * 8 * 4) as u64) {
+        count_heads += rng[0].gen::<usize>().count_ones() as u64;
+        count_heads += rng[1].gen::<usize>().count_ones() as u64;
+        count_heads += rng[2].gen::<usize>().count_ones() as u64;
+        count_heads += rng[3].gen::<usize>().count_ones() as u64;
     }
-    for _ in 0..((count % (size_of::<usize>() * 8 * 4)) / (size_of::<usize>() * 8)) {
-        count_heads += rng[0].gen::<usize>().count_ones() as usize;
+    for _ in 0..((count % (size_of::<usize>() * 8 * 4) as u64) / (size_of::<usize>() * 8) as u64) {
+        count_heads += rng[0].gen::<usize>().count_ones() as u64;
     }
     count_heads
-        + ((rng[0].gen::<usize>() & !(!0 << (count % (size_of::<usize>() * 8)))).count_ones()
-            as usize)
+        + ((rng[0].gen::<usize>() & !(!0 << (count % (size_of::<usize>() * 8) as u64))).count_ones()
+            as u64)
 }
 
 mod vectored_xoshiro {
-    use std::{arch::x86_64::*, simd::u64x4};
+    use std::{
+        arch::x86_64::*,
+        simd::{mask64x4, u64x4},
+    };
 
     pub struct Avx512Xoshiro256plusPlus {
         s: [__m512i; 4],
@@ -391,7 +389,7 @@ mod vectored_xoshiro {
         */
     }
 
-    pub fn gen_avx512_intrinsics(count: usize) -> usize {
+    pub fn gen_avx512_intrinsics(count: u64) -> u64 {
         if count == 0 {
             0
         } else {
@@ -400,7 +398,7 @@ mod vectored_xoshiro {
             for _ in 0..(count / 512) {
                 unsafe {
                     count_heads +=
-                        _mm512_reduce_add_epi64(_mm512_popcnt_epi64(rng.next_u64_x8())) as usize
+                        _mm512_reduce_add_epi64(_mm512_popcnt_epi64(rng.next_u64_x8())) as u64
                 }
             }
 
@@ -409,79 +407,99 @@ mod vectored_xoshiro {
                     !((!0) << ((count % 512) / 8)),
                     rng.next_u64_x8(),
                 ))
-            } as usize;
+            } as u64;
 
             let last_result =
                 unsafe { std::intrinsics::transmute::<__m512i, [u32; 16]>(rng.next_u64_x8()) };
 
-            count_heads + (last_result[0] & !(!0 << (count % 8))).count_ones() as usize
+            count_heads + (last_result[0] & !(!0 << (count % 8))).count_ones() as u64
         }
     }
 
-    union Xoshiro256PlusPlusX8 {
+    pub struct Xoshiro256PlusPlusX4 {
         s: [u64x4; 4],
-        bytes: [u8; 32],
     }
 
-    impl Xoshiro256PlusPlusX8 {
+    impl Xoshiro256PlusPlusX4 {
         pub fn from_entropy() -> Self {
             let mut seed = [u8::default(); 32];
             if let Err(err) = getrandom::getrandom(seed.as_mut()) {
                 panic!("from_entropy failed: {}", err);
             }
-            Self::from_seed(Xoshiro256PlusPlusX8 { bytes: seed })
+            Self::from_seed(seed)
         }
 
         #[inline]
-        fn from_seed(seed: Xoshiro256PlusPlusX8) -> Xoshiro256PlusPlusX8 {
-            if unsafe { seed.bytes }.iter().all(|&x| x == 0) {
+        fn from_seed(seed: [u8; 32]) -> Xoshiro256PlusPlusX4 {
+            if seed.iter().all(|&x| x == 0) {
                 //return Self::seed_from_u64(0);
             }
-            let state = unsafe { seed.s };
-            Xoshiro256PlusPlusX8 { s: state }
+            let state = unsafe {
+                [
+                    u64x4::from_slice(std::slice::from_raw_parts(seed.as_ptr() as *const u64, 4)),
+                    u64x4::from_slice(std::slice::from_raw_parts(
+                        seed.as_ptr().add(16) as *const u64,
+                        4,
+                    )),
+                    u64x4::from_slice(std::slice::from_raw_parts(
+                        seed.as_ptr().add(32) as *const u64,
+                        4,
+                    )),
+                    u64x4::from_slice(std::slice::from_raw_parts(
+                        seed.as_ptr().add(48) as *const u64,
+                        4,
+                    )),
+                ]
+            };
+
+            Xoshiro256PlusPlusX4 { s: state }
         }
 
         #[inline]
-        fn next_u64_x4(&mut self) -> u64x4 {
-            unsafe {
-                let result_plusplus = {
-                    let temp = self.s[0] + self.s[3];
-                    let overflow = temp >> u64x4::splat(41);
-                    ((temp << u64x4::splat(23)) | overflow) + self.s[0]
-                };
+        fn next_u64_x4(&mut self) -> [u64; 4] {
+            let result_plusplus = {
+                let temp = self.s[0] + self.s[3];
+                let overflow = temp >> u64x4::splat(41);
+                ((temp << u64x4::splat(23)) | overflow) + self.s[0]
+            };
 
-                let t = self.s[1] << u64x4::splat(17);
+            let t = self.s[1] << u64x4::splat(17);
 
-                self.s[2] ^= self.s[0];
-                self.s[3] ^= self.s[1];
-                self.s[1] ^= self.s[2];
-                self.s[0] ^= self.s[3];
+            self.s[2] ^= self.s[0];
+            self.s[3] ^= self.s[1];
+            self.s[1] ^= self.s[2];
+            self.s[0] ^= self.s[3];
 
-                self.s[2] ^= t;
+            self.s[2] ^= t;
 
-                self.s[3] = (self.s[3] << u64x4::splat(19)) | (self.s[3] >> u64x4::splat(45));
+            self.s[3] = (self.s[3] << u64x4::splat(19)) | (self.s[3] >> u64x4::splat(45));
 
-                result_plusplus
-            }
+            result_plusplus.as_array().to_owned()
         }
     }
 
-    pub fn gen_portable_simd(count: usize) -> usize {
+    pub fn gen_portable_simd(count: u64) -> u64 {
         if count == 0 {
             0
         } else {
-            let mut rng = Xoshiro256PlusPlusX8::from_entropy();
+            let mut rng = Xoshiro256PlusPlusX4::from_entropy();
             let mut count_heads = 0;
             for _ in 0..(count / 256) {
-                count_heads += self::u64x4::as_array(&rng.next_u64_x4())
+                count_heads += &rng
+                    .next_u64_x4()
                     .iter()
-                    .map(|&x| x.count_ones())
-                    .sum() as usize
+                    .map(|&x| x.count_ones() as u64)
+                    .sum::<u64>()
             }
 
-            // TODO: unaligned to multiple of 256
+            // TODO: use mask types
+            count_heads += rng.next_u64_x4()[0..((count % 256) / 64) as usize]
+                .iter()
+                .map(|&x| x.count_ones() as u64)
+                .sum::<u64>();
 
-            count_heads + (last_result[0] & !(!0 << (count % 8))).count_ones() as usize
+            // TODO: unaligned to multiple of 256
+            count_heads + (rng.next_u64_x4()[0] & !(!0 << (count % 8))).count_ones() as u64
         }
     }
 }
