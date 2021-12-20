@@ -499,7 +499,7 @@ mod vectored_xoshiro {
                 .sum::<u64>();
 
             // TODO: unaligned to multiple of 256
-            count_heads + (rng.next_u64_x4()[0] & !(!0 << (count % 8))).count_ones() as u64
+            count_heads + (rng.next_u64_x4()[0] & !(!0 << (count % 64))).count_ones() as u64
         }
     }
 }
