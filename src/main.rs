@@ -24,6 +24,9 @@ fn main() {
         let duration = start.elapsed();
         println!("  Heads: {}", result);
         println!("  Time elapsed: {}s", duration.as_secs_f32());
-        println!("  Rate: {} Gflips\n", coins_flipped as f32 / (duration.as_secs_f32() * 1e9));
+        println!(
+            "  Rate: {} Gflips\n",
+            coins_flipped as f32 / (duration.as_secs_f32() * 1e9)
+        );
     }
 }
