@@ -23,6 +23,7 @@ fn main() {
         let result = (generator.function)(coins_flipped);
         let duration = start.elapsed();
         println!("  Heads: {}", result);
-        println!("  Time elapsed: {}s\n", duration.as_secs_f32());
+        println!("  Time elapsed: {}s", duration.as_secs_f32());
+        println!("  Rate: {} Gflips\n", coins_flipped as f32 / (duration.as_secs_f32() * 1e9));
     }
 }
