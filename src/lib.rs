@@ -140,7 +140,6 @@ pub mod vectored_xoshiro {
             .map(|&x| x.count_ones() as u64)
             .sum::<u64>();
 
-        // TODO: unaligned to multiple of 256
         count_heads + (generator.next_u64_x8()[0] & !(!0 << (count % 64))).count_ones() as u64
     }
 }
