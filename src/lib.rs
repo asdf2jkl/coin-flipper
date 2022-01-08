@@ -5,13 +5,15 @@ use rand::prelude::*;
 use std::{num::NonZeroUsize, sync::mpsc::channel};
 use vectored_xoshiro::*;
 
-pub fn threaded_wrapper(count: u64) -> u64 {
+pub mod gpgpu;
+
+pub fn threaded_wrapper(count: u64) -> Option<u64> {
     if count == 0 {
-        0
+        Some(0)
     } else {
         // Magic number for threading, will be determined experimentally later.
         if count < 10000000 {
-            gen_portable_simd_x8_inner(count, Xoshiro256PlusPlusX8::from_entropy())
+            Some(gen_portable_simd_x8_inner(count, Xoshiro256PlusPlusX8::from_entropy()))
         } else {
             let num_cpus: usize = std::thread::available_parallelism()
                 .unwrap_or(NonZeroUsize::new(1).unwrap())
@@ -54,7 +56,7 @@ pub fn threaded_wrapper(count: u64) -> u64 {
                 }
             }
 
-            accumulator
+            Some(accumulator)
         }
     }
 }

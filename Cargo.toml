@@ -14,3 +14,4 @@ codegen-units = 1
 [dependencies]
 rand = { version = "0.8.4", features = ["small_rng"] }
 getrandom = { version = "0.2.3", features = ["std", "rdrand"] }
+opencl3 = "0.6.3"

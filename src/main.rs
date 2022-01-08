@@ -1,14 +1,21 @@
-use coin_flipper::threaded_wrapper;
+use coin_flipper::{gpgpu::gpu_executor, threaded_wrapper};
 
 struct Flipper {
     name: &'static str,
-    function: fn(count: u64) -> u64,
+    function: fn(count: u64) -> Option<u64>,
 }
 
-const GENERATORS_TO_TEST: [Flipper; 1] = [Flipper {
-    name: "Count noalloc nobuffer u64x4 generic + threaded",
-    function: threaded_wrapper,
-}];
+const GENERATORS_TO_TEST: [Flipper; 1] = [
+    /*
+    Flipper {
+            name: "Count noalloc nobuffer u64x4 generic + threaded",
+            function: threaded_wrapper,
+        }, */
+    Flipper {
+        name: "OpenCL naive gpu",
+        function: gpu_executor,
+    },
+];
 
 fn main() {
     let coins_flipped = std::env::args()
@@ -22,7 +29,11 @@ fn main() {
         let start = std::time::Instant::now();
         let result = (generator.function)(coins_flipped);
         let duration = start.elapsed();
-        println!("  Heads: {}", result);
+        if let Some(result) = result {
+            println!("  Heads: {}", result);
+        } else {
+            println!("Failed to generate result");
+        }
         println!("  Time elapsed: {}s", duration.as_secs_f32());
         println!(
             "  Rate: {} Gflips\n",
