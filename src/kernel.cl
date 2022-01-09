@@ -1,8 +1,7 @@
 // Copyright (c) 2022 Peter Lafreniere ( 23lafrenip@student.hpts.us ) all rights
 // reserved.
 //
-// Xoshiro128++ algorithm by Sebastiano Vigna and David Blackman (
-// http://prng.di.unimi.it/ )
+// Xoshiro128++ algorithm by Sebastiano Vigna and David Blackman ( http://prng.di.unimi.it/ )
 
 #pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
 

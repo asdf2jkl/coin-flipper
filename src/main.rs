@@ -5,12 +5,11 @@ struct Flipper {
     function: fn(count: u64) -> Option<u64>,
 }
 
-const GENERATORS_TO_TEST: [Flipper; 1] = [
-    /*
+const GENERATORS_TO_TEST: [Flipper; 2] = [
     Flipper {
-            name: "Count noalloc nobuffer u64x4 generic + threaded",
-            function: threaded_wrapper,
-        }, */
+        name: "Count noalloc nobuffer u64x4 generic + threaded",
+        function: threaded_wrapper,
+    },
     Flipper {
         name: "OpenCL naive gpu",
         function: gpu_executor,

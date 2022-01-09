@@ -1,5 +1,4 @@
 #![feature(portable_simd)]
-#![feature(available_parallelism)]
 
 use rand::prelude::*;
 use std::{num::NonZeroUsize, sync::mpsc::channel};
