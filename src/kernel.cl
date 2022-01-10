@@ -6,8 +6,9 @@
 
 #pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
 
-// Note: explicit simd brings no benefit on Nvidia Turing, but I'm leaving it here, 
-//  despite the fact that it makes the cpu have to generate four times as many values for the seed.
+// Note: explicit simd brings no benefit on Nvidia Turing, but I'm leaving it
+// here despite the fact that it makes the cpu have to generate four times as
+// many values for the seed.
 typedef struct xoshiro128plusplus {
   uint4 s[4];
 } xoshiro128plusplus;
@@ -64,7 +65,8 @@ kernel void flipper(const uint count_per_thread,
   atomic_add(local_output, (ulong)accum);
 
   barrier(CLK_LOCAL_MEM_FENCE);
-  // TODO: Write each group's result to their own output location, allowing the cpu to do the final reduction
+  // TODO: Write each group's result to their own output location, allowing the
+  // cpu to do the final reduction
   if (get_local_id(0) == 0) {
     atomic_add(output, *local_output);
   }
