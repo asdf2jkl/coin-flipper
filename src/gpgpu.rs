@@ -1,4 +1,4 @@
-use std::{ffi::c_void, ptr};
+use std::{ffi::c_void, ptr, simd::u32x4};
 
 use opencl3::{
     self,
@@ -18,8 +18,8 @@ static KERNEL_SOURCE: &'static str = include_str!("kernel.cl");
 
 #[repr(C)]
 union xoshiro128plusplus {
-    s: [u32; 4],
-    b: [u8; 16],
+    s: [u32x4; 4],
+    b: [u8; 64],
 }
 
 pub fn gpu_executor(count: u64) -> Option<u64> {
@@ -43,25 +43,19 @@ pub fn gpu_executor(count: u64) -> Option<u64> {
         return None;
     };
 
-    let threads = Device::max_compute_units(&Device::new(context.default_device())).unwrap() * 64 * 8;
+    let threads =
+        Device::max_compute_units(&Device::new(context.default_device())).unwrap() * 64 * 8;
 
     let program = Program::create_and_build_from_source(&context, KERNEL_SOURCE, "").unwrap();
 
     let kernel = Kernel::create(&program, "flipper").unwrap();
-
-    kernel
-        .set_arg::<u32>(
-            0,
-            &((count / threads as u64).try_into().unwrap_or(u32::MAX)),
-        )
-        .unwrap();
 
     let mut host_rng_buffer = Vec::<xoshiro128plusplus>::with_capacity(threads as usize);
     {
         let mut rng = thread_rng();
         for _ in 0..threads {
             unsafe {
-                let mut s = xoshiro128plusplus { b: [0; 16] };
+                let mut s = xoshiro128plusplus { b: [0; 64] };
                 rng.fill_bytes(&mut s.b);
                 host_rng_buffer.push(s);
             }
@@ -81,23 +75,52 @@ pub fn gpu_executor(count: u64) -> Option<u64> {
     kernel.set_arg_local_buffer(3, 8).unwrap();
 
     let queue = CommandQueue::create(&context, context.default_device(), 0).unwrap();
+    let mut result = 0;
 
-    queue
-        .enqueue_nd_range_kernel(
-            kernel.get(),
-            1,
-            ptr::null(),
-            [threads as usize].as_ptr(),
-            [64 as usize].as_ptr(),
-            &[],
-        )
-        .unwrap();
-    let remainder = threaded_wrapper(count % threads as u64).unwrap();
+    for _ in 0..((count / threads as u64) / u32::MAX as u64) {
+        kernel.set_arg::<u32>(0, &(u32::MAX)).unwrap();
 
-    let mut result: [u64; 1] = [0];
-    queue
-        .enqueue_read_buffer(&output, true as u32, 0, &mut result, &[])
-        .unwrap();
+        queue
+            .enqueue_nd_range_kernel(
+                kernel.get(),
+                1,
+                ptr::null(),
+                [threads as usize].as_ptr(),
+                [64 as usize].as_ptr(),
+                &[],
+            )
+            .unwrap();
+        let mut result_buffer: [u64; 1] = [0];
+        queue
+            .enqueue_read_buffer(&output, true as u32, 0, &mut result_buffer, &[])
+            .unwrap();
+        result += result_buffer[0];
+    }
+    {
+        kernel
+            .set_arg::<u32>(
+                0,
+                &(((count / threads as u64) % u32::MAX as u64)
+                    .try_into()
+                    .unwrap()),
+            )
+            .unwrap();
+        queue
+            .enqueue_nd_range_kernel(
+                kernel.get(),
+                1,
+                ptr::null(),
+                [threads as usize].as_ptr(),
+                [64 as usize].as_ptr(),
+                &[],
+            )
+            .unwrap();
+        let mut result_buffer: [u64; 1] = [0];
+        queue
+            .enqueue_read_buffer(&output, true as u32, 0, &mut result_buffer, &[])
+            .unwrap();
+        result += result_buffer[0];
+    }
 
-    Some(result[0] + remainder)
+    Some(result + threaded_wrapper(count % threads as u64).unwrap())
 }
