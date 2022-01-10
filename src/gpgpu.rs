@@ -11,7 +11,6 @@
     - Probably a lot more
 */
 
-
 use std::{ffi::c_void, ptr, simd::u32x4};
 
 use opencl3::{
@@ -28,7 +27,7 @@ use rand::{thread_rng, RngCore};
 
 use crate::threaded_wrapper;
 
-static KERNEL_SOURCE: &'static str = include_str!("kernel.cl");
+static KERNEL_SOURCE: &str = include_str!("kernel.cl");
 
 #[repr(C)]
 union xoshiro128plusplus {
@@ -108,7 +107,7 @@ pub fn gpu_executor(count: u64) -> Option<u64> {
             1,
             ptr::null(),
             [threads as usize].as_ptr(),
-            [64 as usize].as_ptr(),
+            [64].as_ptr(),
             &[],
         )
         .unwrap();
